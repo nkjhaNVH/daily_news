@@ -1,6 +1,6 @@
 # --- This is a conceptual script and requires a local environment with ---
 # --- a powerful GPU and necessary libraries installed: ---
-# pip install langchain langchain_huggingface transformers langgraph tavily-python beautifulsoup4
+# pip install --upgrade langchain langchain-core langchain_huggingface transformers langgraph tavily-python beautifulsoup4
 
 import os
 from typing import List, Dict, TypedDict
@@ -110,3 +110,4 @@ def run_agent(topic: str):
 # Example usage:
 if __name__ == "__main__":
     run_agent("latest trends in renewable energy")
+

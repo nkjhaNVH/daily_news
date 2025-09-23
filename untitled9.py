@@ -60,18 +60,42 @@ def generate_content(topic, api_key, output_format, tone, region):
 
         return generated_text, citations
 
-    except requests.exceptions.RequestException as e:
-        st.error(f"API request failed: {e}")
+    except requests.exceptions.HTTPError as e:
+        st.error(f"API request failed with status code: {e.response.status_code}")
         try:
-            error_details = response.json()
-            st.error(f"API Error Details: {error_details.get('error', {}).get('message', 'No specific message.')}")
-        except (ValueError, AttributeError):
-            st.error(f"Response Body: {response.text if 'response' in locals() else 'No response'}")
+            error_details = e.response.json()
+            error_message = error_details.get('error', {}).get('message', 'No specific message.')
+            
+            # Provide specific, actionable advice based on common error codes
+            if e.response.status_code == 400:
+                st.error(f"API Error (Bad Request): {error_message}")
+                st.warning("This often means the API key is malformed or invalid. Please double-check the key you entered in the sidebar.")
+            elif e.response.status_code == 403:
+                st.error(f"API Error (Permission Denied): {error_message}")
+                st.warning("This could mean a few things:\n"
+                           "1. The 'Generative Language API' or 'Vertex AI API' is not enabled in your Google Cloud project.\n"
+                           "2. Your project does not have a billing account enabled.\n"
+                           "3. The API key is restricted and doesn't have permission to access this model.")
+            elif e.response.status_code == 429:
+                st.error(f"API Error (Resource Exhausted): {error_message}")
+                st.warning("You have exceeded your API usage quota. Please check your usage limits in the Google AI Studio or Google Cloud Console.")
+            else:
+                st.error(f"API Error Details: {error_message}")
+        except json.JSONDecodeError:
+            st.error(f"Failed to parse error response from the API. Response text: {e.response.text}")
         return None, None
-    except (json.JSONDecodeError, IndexError, KeyError) as e:
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network request failed: {e}")
+        st.warning("Please check your internet connection and if firewalls are blocking the request to generativelanguage.googleapis.com.")
+        return None, None
+    except (IndexError, KeyError) as e:
         st.error(f"Failed to parse AI response. The model's output may be malformed. Error: {e}")
-        st.json(result)  # Show the raw response for debugging
+        st.json(locals().get('result', {"Error": "Could not retrieve result from API response."}))
         return None, None
+
+# --- Initialize session state ---
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = ''
 
 # --- UI Layout ---
 st.set_page_config(page_title="InsightSphere - AI Global News Assistant", page_icon="🌐", layout="wide")
@@ -88,7 +112,15 @@ st.markdown("---")
 
 # --- Sidebar for API Key and Controls ---
 st.sidebar.header("⚙️ Configuration")
-api_key = st.sidebar.text_input("Gemini API Key", type="password", help="Get your free key from Google AI Studio.")
+api_key_input = st.sidebar.text_input(
+    "Gemini API Key", 
+    type="password", 
+    help="Get your free key from Google AI Studio.", 
+    value=st.session_state.api_key
+)
+# Update session state when the user types in a new key
+if api_key_input:
+    st.session_state.api_key = api_key_input
 
 st.sidebar.header("📝 Content Controls")
 output_format = st.sidebar.selectbox(
@@ -101,6 +133,12 @@ tone = st.sidebar.selectbox(
 )
 
 # --- Main Content Area ---
+
+# Only proceed if an API key has been entered
+if not st.session_state.api_key:
+    st.warning("👋 Welcome to InsightSphere! Please enter your Gemini API key in the sidebar to begin.")
+    st.stop()
+
 st.subheader("Enter a topic to begin your analysis")
 col_topic, col_region = st.columns(2)
 with col_topic:
@@ -112,7 +150,7 @@ with col_region:
 if st.button("Generate Intelligence", type="primary", use_container_width=True):
     if topic:
         with st.spinner("🤖 Searching the web and generating your content..."):
-            generated_content, citations = generate_content(topic, api_key, output_format, tone, region)
+            generated_content, citations = generate_content(topic, st.session_state.api_key, output_format, tone, region)
             if generated_content:
                 st.markdown("---")
                 st.subheader(f"Your Generated {output_format}")
@@ -151,3 +189,4 @@ if st.button("Generate Intelligence", type="primary", use_container_width=True):
 
     else:
         st.warning("Please enter a topic to generate content.")
+

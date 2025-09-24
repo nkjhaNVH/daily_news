@@ -1,6 +1,7 @@
 # --- This is a Streamlit application that runs a local AI agent. ---
 # --- It requires a powerful machine (GPU recommended) and libraries installed: ---
 # pip install --upgrade streamlit transformers torch accelerate tavily-python
+!pip install --upgrade streamlit transformers torch accelerate tavily-python
 
 import streamlit as st
 import os

@@ -8,6 +8,7 @@ from typing import List, Dict, TypedDict
 
 # --- Core LangGraph and Transformers Imports ---
 # These are the libraries that will run the AI logic locally.
+from langchain.output_parsers import PydanticOutputParser
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_huggingface import HuggingFacePipeline

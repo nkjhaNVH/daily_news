@@ -1,136 +1,134 @@
 import streamlit as st
-# Removed requests and json as they are no longer needed for a no-API version
-# import requests
-# import json
+import requests
+from bs4 import BeautifulSoup
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import sent_tokenize, word_tokenize
+from collections import defaultdict
+import string
 
-def generate_content_no_api(topic, output_format, tone, region):
-    """
-    Generates placeholder content based on the topic and format, without using any external APIs.
-    This is for demonstration/development purposes when API access is not desired or available.
-    """
+# Download necessary NLTK data (run once)
+try:
+    nltk.data.find('tokenizers/punkt')
+except nltk.downloader.DownloadError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/stopwords')
+except nltk.downloader.DownloadError:
+    nltk.download('stopwords')
+
+# --- Helper Functions for Web Scraping and Summarization ---
+
+def get_text_from_url(url):
+    """Fetches content from a URL and extracts paragraph text."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status() # Raise an exception for bad status codes
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Try to find common article content containers
+        # This is highly dependent on website structure and might need adjustment
+        content_div = soup.find('article') or soup.find('div', class_='story-content') or soup.find('div', class_='entry-content') or soup.find('div', class_='main-content')
+
+        paragraphs = []
+        if content_div:
+            for p in content_div.find_all('p'):
+                text = p.get_text().strip()
+                if len(text) > 50: # Only include longer paragraphs to avoid small snippets
+                    paragraphs.append(text)
+        else: # Fallback if specific content div not found
+            for p in soup.find_all('p'):
+                text = p.get_text().strip()
+                if len(text) > 50:
+                    paragraphs.append(text)
+
+        return "\n".join(paragraphs)
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Could not fetch content from {url}: {e}")
+        return ""
+    except Exception as e:
+        st.warning(f"Error parsing content from {url}: {e}")
+        return ""
+
+def summarize_text_nltk(text, num_sentences=5):
+    """Summarizes text using NLTK based on sentence scoring."""
+    if not text:
+        return "No content to summarize."
+
+    # 1. Tokenize sentences
+    sentences = sent_tokenize(text)
     
-    # Simulate some processing time
-    import time
-    time.sleep(2) 
+    if not sentences:
+        return "No sentences found to summarize."
 
-    # Create static/placeholder content
-    generated_text = f"""
-    This is a simulated {output_format} about **{topic}**.
+    # 2. Tokenize words and remove stop words and punctuation
+    words = word_tokenize(text.lower())
+    stop_words = set(stopwords.words('english') + list(string.punctuation))
+    filtered_words = [word for word in words if word.isalnum() and word not in stop_words]
+
+    # 3. Calculate word frequency
+    word_freq = defaultdict(int)
+    for word in filtered_words:
+        word_freq[word] += 1
+
+    # 4. Calculate sentence scores
+    sentence_scores = defaultdict(int)
+    for i, sentence in enumerate(sentences):
+        for word in word_tokenize(sentence.lower()):
+            if word in word_freq:
+                sentence_scores[i] += word_freq[word]
+
+    # 5. Get top N sentences
+    sorted_sentences = sorted(sentence_scores.items(), key=lambda x: x[1], reverse=True)
     
-    **Tone:** {tone}
-    **Region Focus:** {region if region else 'Global'}
+    # Ensure we don't try to get more sentences than available
+    num_sentences = min(num_sentences, len(sentences))
 
-    **Key Insight (Simulated):** Recent trends indicate a growing interest in {topic} across the globe, with particular activity noted in {region if region else 'various regions'}. Companies and researchers are investing heavily in this area, driven by both market demand and technological advancements.
+    summary_sentences = []
+    for idx, _ in sorted_sentences[:num_sentences]:
+        summary_sentences.append(sentences[idx])
 
-    **Impact (Simulated):** The long-term implications for {topic} are substantial, potentially reshaping industries and daily life. Continued monitoring of developments in {region if region else 'key markets'} will be crucial.
+    return " ".join(summary_sentences)
 
-    #Simulated #AI #PlaceholderContent #NoAPI
+def perform_local_search_and_summarize(topic, region, num_sources=3, summary_length_sentences=5):
     """
+    Simulates Google Search by constructing a query and then attempting to
+    scrape and summarize content from generic news domains.
+    """
+    st.info("⚠️ Disclaimer: This 'no-API' search and summarization is a basic demonstration. "
+            "Direct web scraping is fragile, can be blocked, and provides lower quality results "
+            "compared to dedicated APIs or AI models. For production use, consider dedicated search APIs.")
+            
+    search_query = f"{topic} news"
+    if region:
+        search_query = f"{topic} news in {region}"
 
-    # Simulate some static citations
-    citations = [
-        {"title": "Simulated Source 1: The Future of " + topic, "uri": "https://example.com/source1"},
-        {"title": "Simulated Source 2: Regional Analysis on " + topic, "uri": "https://example.com/source2"},
+    # Construct a Google Search URL. This is NOT an API, just a browser URL.
+    # We will try to open a few specific news sites from the results manually.
+    # THIS IS HIGHLY FRAGILE AND FOR DEMONSTRATION ONLY.
+    # In a real scenario, you'd parse search results or use a search API.
+    
+    # Hardcoding some generic news sites for demonstration.
+    # In a real (but still "no API") scenario, you'd perform a search, get URLs, then scrape those.
+    # This step is the most challenging for "no API" without scraping search results.
+    # For a real "no API" scenario you could try something like:
+    # `https://www.google.com/search?q={search_query.replace(' ', '+')}`
+    # and then use BeautifulSoup to parse the search result page for links,
+    # but that is even more complex and fragile due to Google's dynamic page structure.
+
+    # For this demo, we'll assume we know some good sources and try to get content from them
+    # based on the topic. This is a simplification.
+    potential_news_sites = [
+        f"https://www.bbc.com/news/topics/{topic.replace(' ', '-')}",
+        f"https://www.nytimes.com/search?q={topic.replace(' ', '+')}",
+        f"https://edition.cnn.com/search?q={topic.replace(' ', '+')}",
+        f"https://www.reuters.com/search?q={topic.replace(' ', '+')}",
     ]
     
-    # Add format-specific content for LinkedIn Post
-    if output_format == "LinkedIn Post":
-        generated_text += "\n\n#SimulatedPost #LinkedIn"
-    
-    return generated_text, citations
+    all_extracted_text = []
+    sources_used = []
 
-# --- Initialize session state ---
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = ''
-
-# --- UI Layout ---
-st.set_page_config(page_title="InsightSphere - AI Global News Assistant (No API Demo)", page_icon="🌐", layout="wide")
-
-# --- Header ---
-col1, col2 = st.columns([1, 6])
-with col1:
-    st.image("https://i.imgur.com/b720ifp.png", width=100) # New Logo
-with col2:
-    st.title("InsightSphere (No API Demo)")
-    st.markdown("### Illustrating the UI without external API calls")
-
-st.markdown("---")
-
-# --- Sidebar for Controls (API Key input is present but effectively ignored) ---
-st.sidebar.header("⚙️ Configuration")
-st.sidebar.info("API Key input is ignored in this 'No API' demonstration.")
-api_key_input = st.sidebar.text_input(
-    "Gemini API Key (Ignored)", 
-    type="password", 
-    help="This key would normally be used for Gemini API.", 
-    value=st.session_state.api_key
-)
-# Update session state, though it's not used in generate_content_no_api
-if api_key_input:
-    st.session_state.api_key = api_key_input
-
-st.sidebar.header("📝 Content Controls")
-output_format = st.sidebar.selectbox(
-    "Select Output Format",
-    ("LinkedIn Post", "Executive Summary", "Email Briefing", "Key Talking Points")
-)
-tone = st.sidebar.selectbox(
-    "Select Tone of Voice",
-    ("Professional", "Analytical", "Casual", "Optimistic", "Cautious")
-)
-
-# --- Main Content Area ---
-
-# No API key check needed as we're not using an API
-st.subheader("Enter a topic to see simulated analysis")
-col_topic, col_region = st.columns(2)
-with col_topic:
-    topic = st.text_input("Topic", placeholder="e.g., 'advances in quantum computing'")
-with col_region:
-    region = st.text_input("Region/Country Focus (Optional)", placeholder="e.g., 'Europe', 'India'")
-
-
-if st.button("Generate Intelligence (Simulated)", type="primary", use_container_width=True):
-    if topic:
-        with st.spinner("🤖 Simulating content generation..."):
-            # Call the new no-API function
-            generated_content, citations = generate_content_no_api(topic, output_format, tone, region)
-            
-            if generated_content:
-                st.markdown("---")
-                st.subheader(f"Your Generated {output_format} (Simulated)")
-                
-                # Custom CSS for a cleaner, modern look
-                st.markdown(
-                    """
-                    <style>
-                    .content-container {
-                        border: 1px solid #e1e4e8;
-                        border-radius: 12px;
-                        padding: 25px;
-                        background-color: #f6f8fa;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-                        margin-bottom: 20px;
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                        font-size: 16px;
-                        line-height: 1.6;
-                        color: #24292e;
-                    }
-                    .citations-expander {
-                        border-radius: 12px !important;
-                        border: 1px solid #e1e4e8 !important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True
-                )
-
-                formatted_content = generated_content.replace('\n', '<br>')
-                st.markdown(f'<div class="content-container">{formatted_content}</div>', unsafe_allow_html=True)
-
-                if citations:
-                    with st.expander("📰 View Simulated News Sources", expanded=False):
-                        for i, source in enumerate(citations):
-                            st.markdown(f"[{i+1}. {source['title']}]({source['uri']})")
-
-    else:
-        st.warning("Please enter a topic to simulate content.")
+    with st.spinner(f"Sea

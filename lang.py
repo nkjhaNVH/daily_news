@@ -1,160 +1,136 @@
-# --- This is a conceptual script and requires a local environment with ---
-# --- a powerful GPU and necessary libraries installed: ---
-# pip install --upgrade langchain langchain-core langchain_huggingface transformers langgraph tavily-python beautifulsoup4 python-dotenv
+import streamlit as st
+# Removed requests and json as they are no longer needed for a no-API version
+# import requests
+# import json
 
-import os
-from typing import List, Dict, TypedDict
-
-# --- Setup: Load environment variables for API keys ---
-# Create a .env file in the same directory and add your key:
-# TAVILY_API_KEY="your_tavily_api_key_here"
-from dotenv import load_dotenv
-load_dotenv()
-
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain_huggingface import HuggingFacePipeline
-from transformers import pipeline, T5ForConditionalGeneration, AutoTokenizer
-from langgraph.graph import StateGraph, END
-
-# --- 1. Define the State for the Graph ---
-# This is the "memory" of our agent as it moves through the steps.
-class AgentState(TypedDict):
-    messages: List[BaseMessage]
-    topic: str
-    search_results: str
-    synthesis: str
-
-# --- 2. Set Up Tools and the LLM ---
-# Check if the Tavily API key is available
-if not os.getenv("TAVILY_API_KEY"):
-    raise ValueError("Tavily API key not found. Please add it to your .env file.")
-
-# This is a search tool LangGraph can use.
-search_tool = TavilySearchResults(max_results=3)
-
-# Load a local model from Hugging Face.
-# This downloads a multi-gigabyte model and requires a GPU to run effectively.
-# Using a smaller, faster model for demonstration purposes.
-# For higher quality, you might use 'meta-llama/Llama-3-8B-Instruct'
-print("--- 🚀 Loading local LLM (google/flan-t5-large). This may take a moment... ---")
-model_name = "google/flan-t5-large"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = T5ForConditionalGeneration.from_pretrained(model_name)
-llm_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
-llm = HuggingFacePipeline(pipeline=llm_pipeline)
-print("--- ✅ LLM Loaded Successfully ---")
-
-
-# --- 3. Define the Nodes (Steps) of the Graph ---
-
-def search_node(state: AgentState) -> Dict:
-    """Node to search the web for the latest news on a topic."""
-    print("--- 🔍 Searching for news ---")
-    topic = state['topic']
-    try:
-        results = search_tool.invoke(topic)
-        result_contents = "\n\n".join([res['content'] for res in results])
-        return {"search_results": result_contents}
-    except Exception as e:
-        print(f"--- ❌ Search failed: {e} ---")
-        return {"search_results": ""}
-
-
-def synthesis_node(state: AgentState) -> Dict:
-    """Node to synthesize search results into key points."""
-    print("--- 🧠 Synthesizing information ---")
-    prompt = f"""
-    Based on the following search results, synthesize the most critical and recent information into a few key bullet points.
-    If the search results are empty or irrelevant, state that you could not find sufficient information.
-    
-    Search Results:
-    {state['search_results']}
+def generate_content_no_api(topic, output_format, tone, region):
     """
-    response = llm.invoke(prompt)
-    return {"synthesis": response}
-
-def generate_post_node(state: AgentState) -> Dict:
-    """Node to generate the final LinkedIn post."""
-    print("--- ✍️ Generating LinkedIn Post ---")
-    prompt = f"""
-    Using the following key points, write a concise, powerful, and professional LinkedIn post.
-    Conclude with 3 to 5 relevant and popular hashtags.
-    
-    Key Points:
-    {state['synthesis']}
+    Generates placeholder content based on the topic and format, without using any external APIs.
+    This is for demonstration/development purposes when API access is not desired or available.
     """
-    response = llm.invoke(prompt)
-    final_message = HumanMessage(content=response)
-    return {"messages": state["messages"] + [final_message]}
+    
+    # Simulate some processing time
+    import time
+    time.sleep(2) 
 
-# --- 4. Define the Router (Conditional Edge) ---
-def should_continue(state: AgentState) -> str:
-    """Router node to decide whether to continue based on search results."""
-    if not state['search_results'] or len(state['search_results']) < 100:
-        print("--- ⚠️ Search results insufficient. Ending graph. ---")
-        return "end"
-    else:
-        print("--- ✅ Search results are sufficient. Proceeding to synthesis. ---")
-        return "continue"
+    # Create static/placeholder content
+    generated_text = f"""
+    This is a simulated {output_format} about **{topic}**.
+    
+    **Tone:** {tone}
+    **Region Focus:** {region if region else 'Global'}
 
+    **Key Insight (Simulated):** Recent trends indicate a growing interest in {topic} across the globe, with particular activity noted in {region if region else 'various regions'}. Companies and researchers are investing heavily in this area, driven by both market demand and technological advancements.
 
-# --- 5. Build the Graph ---
-# This defines the workflow with a self-correction check.
-workflow = StateGraph(AgentState)
+    **Impact (Simulated):** The long-term implications for {topic} are substantial, potentially reshaping industries and daily life. Continued monitoring of developments in {region if region else 'key markets'} will be crucial.
 
-workflow.add_node("search", search_node)
-workflow.add_node("synthesis", synthesis_node)
-workflow.add_node("generate_post", generate_post_node)
+    #Simulated #AI #PlaceholderContent #NoAPI
+    """
 
-workflow.set_entry_point("search")
+    # Simulate some static citations
+    citations = [
+        {"title": "Simulated Source 1: The Future of " + topic, "uri": "https://example.com/source1"},
+        {"title": "Simulated Source 2: Regional Analysis on " + topic, "uri": "https://example.com/source2"},
+    ]
+    
+    # Add format-specific content for LinkedIn Post
+    if output_format == "LinkedIn Post":
+        generated_text += "\n\n#SimulatedPost #LinkedIn"
+    
+    return generated_text, citations
 
-# Add the conditional router. After the "search" node, it will call "should_continue".
-# Based on the return value ("continue" or "end"), it will route to the next appropriate node.
-workflow.add_conditional_edges(
-    "search",
-    should_continue,
-    {
-        "continue": "synthesis",
-        "end": END,
-    }
+# --- Initialize session state ---
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = ''
+
+# --- UI Layout ---
+st.set_page_config(page_title="InsightSphere - AI Global News Assistant (No API Demo)", page_icon="🌐", layout="wide")
+
+# --- Header ---
+col1, col2 = st.columns([1, 6])
+with col1:
+    st.image("https://i.imgur.com/b720ifp.png", width=100) # New Logo
+with col2:
+    st.title("InsightSphere (No API Demo)")
+    st.markdown("### Illustrating the UI without external API calls")
+
+st.markdown("---")
+
+# --- Sidebar for Controls (API Key input is present but effectively ignored) ---
+st.sidebar.header("⚙️ Configuration")
+st.sidebar.info("API Key input is ignored in this 'No API' demonstration.")
+api_key_input = st.sidebar.text_input(
+    "Gemini API Key (Ignored)", 
+    type="password", 
+    help="This key would normally be used for Gemini API.", 
+    value=st.session_state.api_key
 )
-workflow.add_edge("synthesis", "generate_post")
-workflow.add_edge("generate_post", END)
+# Update session state, though it's not used in generate_content_no_api
+if api_key_input:
+    st.session_state.api_key = api_key_input
 
-# Compile the graph into a runnable object
-app = workflow.compile()
+st.sidebar.header("📝 Content Controls")
+output_format = st.sidebar.selectbox(
+    "Select Output Format",
+    ("LinkedIn Post", "Executive Summary", "Email Briefing", "Key Talking Points")
+)
+tone = st.sidebar.selectbox(
+    "Select Tone of Voice",
+    ("Professional", "Analytical", "Casual", "Optimistic", "Cautious")
+)
+
+# --- Main Content Area ---
+
+# No API key check needed as we're not using an API
+st.subheader("Enter a topic to see simulated analysis")
+col_topic, col_region = st.columns(2)
+with col_topic:
+    topic = st.text_input("Topic", placeholder="e.g., 'advances in quantum computing'")
+with col_region:
+    region = st.text_input("Region/Country Focus (Optional)", placeholder="e.g., 'Europe', 'India'")
 
 
-# --- 6. Run the Agent ---
-def run_agent(topic: str):
-    """Function to run the agent with a specific topic."""
-    initial_state = {
-        "topic": topic,
-        "messages": [HumanMessage(content=f"Generate a LinkedIn post about {topic}")]
-    }
-    
-    print(f"\n--- Running Agent for topic: '{topic}' ---")
-    # The 'stream' method shows the output of each step
-    for s in app.stream(initial_state):
-        print(s)
-        print("----")
-    
-    final_state = app.invoke(initial_state)
-    print("\n--- ✅ Final Output ---")
-    # Check if a final message was generated before trying to print it
-    if len(final_state['messages']) > 1:
-        print(final_state['messages'][-1].content)
+if st.button("Generate Intelligence (Simulated)", type="primary", use_container_width=True):
+    if topic:
+        with st.spinner("🤖 Simulating content generation..."):
+            # Call the new no-API function
+            generated_content, citations = generate_content_no_api(topic, output_format, tone, region)
+            
+            if generated_content:
+                st.markdown("---")
+                st.subheader(f"Your Generated {output_format} (Simulated)")
+                
+                # Custom CSS for a cleaner, modern look
+                st.markdown(
+                    """
+                    <style>
+                    .content-container {
+                        border: 1px solid #e1e4e8;
+                        border-radius: 12px;
+                        padding: 25px;
+                        background-color: #f6f8fa;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                        margin-bottom: 20px;
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                        font-size: 16px;
+                        line-height: 1.6;
+                        color: #24292e;
+                    }
+                    .citations-expander {
+                        border-radius: 12px !important;
+                        border: 1px solid #e1e4e8 !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True
+                )
+
+                formatted_content = generated_content.replace('\n', '<br>')
+                st.markdown(f'<div class="content-container">{formatted_content}</div>', unsafe_allow_html=True)
+
+                if citations:
+                    with st.expander("📰 View Simulated News Sources", expanded=False):
+                        for i, source in enumerate(citations):
+                            st.markdown(f"[{i+1}. {source['title']}]({source['uri']})")
+
     else:
-        print("Could not generate a post due to insufficient information from the search.")
-
-
-# Example usage:
-if __name__ == "__main__":
-    try:
-        run_agent("latest trends in renewable energy")
-        print("\n" + "="*50 + "\n")
-        run_agent("news about fictional company 'GloboCorp'") # Example that might fail search
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
-
+        st.warning("Please enter a topic to simulate content.")

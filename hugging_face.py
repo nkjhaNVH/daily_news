@@ -110,8 +110,8 @@ if api_key_input:
 st.sidebar.header("📝 Content Controls")
 model_id = st.sidebar.text_input(
     "Hugging Face Model ID",
-    value="mistralai/Mistral-7B-Instruct-v0.2",
-    help="e.g., mistralai/Mistral-7B-Instruct-v0.2"
+    value="gpt2",
+    help="e.g., gpt2, google/flan-t5-large"
 )
 output_format = st.sidebar.selectbox(
     "Select Output Format",

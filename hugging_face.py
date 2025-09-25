@@ -58,6 +58,9 @@ def generate_content(topic, api_key, model_id, output_format, tone):
             error_details = e.response.json()
             error_message = error_details.get('error', 'No specific message.')
             st.error(f"API Error Details: {error_message}")
+            if e.response.status_code == 403:
+                st.warning("This is a permissions error. Please ensure your API key is valid and has permission to access the selected model. "
+                           "Some models may require a pro account or be private. Double-check your API key and the model permissions on Hugging Face.")
         except json.JSONDecodeError:
             st.error(f"Failed to parse error response from the API. Response text: {e.response.text}")
         return None

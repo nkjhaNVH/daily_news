@@ -1,157 +1,189 @@
-# --- This is a Streamlit application that runs a local AI agent. ---
-# --- It requires a powerful machine (GPU recommended) and libraries installed: ---
-# pip install --upgrade streamlit transformers torch accelerate tavily-python
-
 import streamlit as st
-import os
-from typing import Dict
-from tavily import TavilyClient
+import requests
+import json
 
-# --- Core Transformers Import ---
-# This library will run the AI logic locally.
-from transformers import pipeline, T5ForConditionalGeneration, AutoTokenizer
-
-
-# --- 1. Model and Tool Loading (with Caching) ---
-# Use Streamlit's caching to load the large model only once.
-@st.cache_resource
-def load_llm_pipeline(model_name="google/flan-t5-large"):
-    """Loads the Hugging Face model and tokenizer into a pipeline."""
-    st.info(f"Downloading and loading the local model '{model_name}'. This may take a few minutes on the first run...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = T5ForConditionalGeneration.from_pretrained(model_name)
-    llm_pipeline_instance = pipeline("text-generation", model=model, tokenizer=tokenizer, device_map="auto")
-    st.success("✅ Local LLM Loaded Successfully!")
-    return llm_pipeline_instance
-
-# --- 2. Define the Agent's Logic in Plain Python ---
-# We replace the LangGraph state and nodes with a single, clear function.
-
-def run_agent_flow(topic: str, tavily_client: TavilyClient, llm_pipeline) -> str:
+def generate_content(topic, api_key, output_format, tone, region):
     """
-    Orchestrates the agent's workflow using direct library calls instead of LangGraph.
+    Calls the Tavily API to find news and uses the results to generate content via the Gemini API.
     """
-    # --- Node 1: Search ---
-    progress_bar = st.progress(0, text="🔍 Searching for news...")
+    if not api_key:
+        st.error("Please enter your Tavily API key in the sidebar to use this feature.")
+        return None, None
+
+    # Step 1: Call the Tavily API to perform a web search
+    tavily_api_url = "https://api.tavily.com/search"
+    query = f"{topic} news in {region}" if region else f"{topic} news"
+    
+    tavily_payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "basic",
+        "include_raw_content": True,
+        "include_images": False
+    }
+
     try:
-        results = tavily_client.search(query=topic, max_results=3)
-        search_results = "\n\n".join([res['content'] for res in results['results']])
-    except Exception as e:
-        st.error(f"Search failed: {e}. Is your Tavily API key correct?")
-        progress_bar.empty()
-        return f"Error: Search failed. {e}"
+        tavily_response = requests.post(tavily_api_url, json=tavily_payload)
+        tavily_response.raise_for_status()
+        tavily_result = tavily_response.json()
+        
+        search_results = tavily_result.get('results', [])
+        
+        if not search_results:
+            st.warning("No search results found for the given topic. Please try a different topic.")
+            return None, None
+            
+        # Extract content and citations from Tavily results
+        context = ""
+        citations = []
+        for result in search_results:
+            context += f"Title: {result['title']}\nContent: {result['content']}\n\n"
+            citations.append({"title": result['title'], "uri": result['url']})
 
-    # --- Router Logic ---
-    if not search_results or len(search_results) < 100:
-        st.warning("--- ⚠️ Search results insufficient. Cannot generate a post. ---")
-        progress_bar.empty()
-        return "Error: Could not find sufficient information from the web search."
-    else:
-        st.success("--- ✅ Search results are sufficient. ---")
+    except requests.exceptions.HTTPError as e:
+        st.error(f"Tavily API request failed with status code: {e.response.status_code}")
+        st.warning("Please check your API key and ensure it is valid.")
+        return None, None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network request failed: {e}")
+        st.warning("Please check your internet connection.")
+        return None, None
 
-    # --- Node 2: Synthesis ---
-    progress_bar.progress(33, text="🧠 Synthesizing information...")
-    synthesis_prompt = f"""
-    Based on the following search results, synthesize the most critical and recent information into a few key bullet points.
-    If the search results are empty or irrelevant, state that you could not find sufficient information.
-    Search Results:
-    {search_results}
+    # Step 2: Call the Gemini API to generate content based on the search results
+    gemini_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={st.secrets['GEMINI_API_KEY']}"
+
+    prompt = f"""
+    Act as a world-class market analyst and communication expert.
+    Analyze the following information and developments:
+
+    ---
+    {context}
+    ---
+
+    Your task is to:
+    1. Synthesize the most critical and recent information from the provided context.
+    2. Generate a response in the format of a '{output_format}'.
+    3. The tone of the response must be '{tone}'.
+    4. If the requested format is a 'LinkedIn Post', conclude with 3-5 relevant and popular hashtags.
+    5. Ensure the output is well-structured, insightful, and ready for a professional audience.
     """
+
+    gemini_payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+    }
+
     try:
-        # The pipeline returns a list of dictionaries, we extract the generated text.
-        synthesis_response = llm_pipeline(synthesis_prompt, max_length=256)[0]['generated_text']
-        if not synthesis_response.strip():
-             st.error("Synthesis resulted in empty output. The model may be struggling with the content.")
-             progress_bar.empty()
-             return "Error: Synthesis failed to produce content."
-    except Exception as e:
-        st.error(f"Error during synthesis: {e}")
-        progress_bar.empty()
-        return f"Error: The local AI model failed during the synthesis step. This could be a memory issue."
+        gemini_response = requests.post(gemini_api_url, json=gemini_payload, headers={'Content-Type': 'application/json'})
+        gemini_response.raise_for_status()
+        result = gemini_response.json()
+
+        generated_text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text')
+        
+        if not generated_text:
+            st.error("The Gemini model did not return a valid response. Please try a different topic or adjust your settings.")
+            return None, None
+        
+        return generated_text, citations
+
+    except requests.exceptions.HTTPError as e:
+        st.error(f"Gemini API request failed with status code: {e.response.status_code}")
+        st.warning("Please check your Gemini API key and try again.")
+        return None, None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network request failed: {e}")
+        st.warning("Please check your internet connection.")
+        return None, None
 
 
-    # --- Node 3: Generate Post ---
-    progress_bar.progress(66, text="✍️ Generating LinkedIn Post...")
-    generation_prompt = f"""
-    Using the following key points, write a concise, powerful, and professional LinkedIn post.
-    The post should be engaging and insightful.
-    Conclude with 3 to 5 relevant and popular hashtags.
-    Key Points:
-    {synthesis_response}
-    """
-    try:
-        # Added min_length and max_length to ensure the model generates a response.
-        final_response = llm_pipeline(generation_prompt, min_length=50, max_length=300)[0]['generated_text']
-        if not final_response.strip():
-             st.error("Final post generation resulted in empty output. The model failed to generate the post.")
-             progress_bar.empty()
-             return "Error: The model failed to generate the final post."
-    except Exception as e:
-        st.error(f"Error during post generation: {e}")
-        progress_bar.empty()
-        return f"Error: The local AI model failed during the final generation step."
+# --- Initialize session state ---
+if 'api_key' not in st.session_state:
+    st.session_state.api_key = ''
 
-    progress_bar.progress(100, text="✅ Complete!")
-    progress_bar.empty()
-    return final_response
+# --- UI Layout ---
+st.set_page_config(page_title="InsightSphere - News Assistant", page_icon="🌐", layout="wide")
 
+# --- Header ---
+col1, col2 = st.columns([1, 6])
+with col1:
+    st.markdown("🌐")
+with col2:
+    st.title("InsightSphere")
+    st.markdown("### Turn Global News into Actionable Intelligence")
 
-# --- 3. UI Layout and App Logic ---
-st.set_page_config(page_title="InsightSphere Local - Manual Agent", page_icon="🧠", layout="wide")
-st.title("🧠 InsightSphere (Local Agent)")
-st.markdown("### Powered by Pure Python & Hugging Face")
-st.warning("**Note:** This app runs a Large Language Model **locally on your computer**. It requires a powerful machine (preferably with a GPU) and may be slow.")
+st.markdown("---")
 
-# --- Sidebar for API Key ---
+# --- Sidebar for API Key and Controls ---
 st.sidebar.header("⚙️ Configuration")
-tavily_api_key = st.sidebar.text_input(
+api_key_input = st.sidebar.text_input(
     "Tavily API Key",
     type="password",
-    help="Get your free key from tavily.com. This is used for web search."
+    help="Get your free key from Tavily AI.",
+    value=st.session_state.api_key
+)
+if api_key_input:
+    st.session_state.api_key = api_key_input
+
+st.sidebar.header("📝 Content Controls")
+output_format = st.sidebar.selectbox(
+    "Select Output Format",
+    ("LinkedIn Post", "Executive Summary", "Email Briefing", "Key Talking Points")
+)
+tone = st.sidebar.selectbox(
+    "Select Tone of Voice",
+    ("Professional", "Analytical", "Casual", "Optimistic", "Cautious")
 )
 
-# --- Main App ---
-if not tavily_api_key:
-    st.info("Please enter your Tavily API key in the sidebar to begin.")
-else:
-    # Load the LLM after the key is provided
-    llm_pipeline_instance = load_llm_pipeline()
-    # Initialize the Tavily client
-    tavily_client = TavilyClient(api_key=tavily_api_key)
+# --- Main Content Area ---
 
-    topic = st.text_input("Enter a topic to generate a LinkedIn Post:", placeholder="e.g., 'latest trends in renewable energy'")
+if not st.session_state.api_key:
+    st.warning("👋 Welcome to InsightSphere! Please enter your Tavily API key in the sidebar to begin.")
+    st.stop()
 
-    if st.button("Generate Post", type="primary", use_container_width=True):
-        if topic:
-            # We remove the spinner to see the detailed progress updates below
-            st.markdown("---")
-            st.subheader("Agent Progress")
+st.subheader("Enter a topic to begin your analysis")
+col_topic, col_region = st.columns(2)
+with col_topic:
+    topic = st.text_input("Topic", placeholder="e.g., 'advances in quantum computing'")
+with col_region:
+    region = st.text_input("Region/Country Focus (Optional)", placeholder="e.g., 'Europe', 'India'")
 
-            try:
-                # Run the agent flow directly
-                final_output = run_agent_flow(topic, tavily_client, llm_pipeline_instance)
-
+if st.button("Generate Intelligence", type="primary", use_container_width=True):
+    if topic:
+        with st.spinner("🌐 Searching the web and generating your content..."):
+            generated_content, citations = generate_content(topic, st.session_state.api_key, output_format, tone, region)
+            if generated_content:
                 st.markdown("---")
-                st.subheader("✅ Final Output")
+                st.subheader(f"Your Generated {output_format}")
+                
+                # Custom CSS for a cleaner, modern look
+                st.markdown(
+                    """
+                    <style>
+                    .content-container {
+                        border: 1px solid #e1e4e8;
+                        border-radius: 12px;
+                        padding: 25px;
+                        background-color: #f6f8fa;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+                        margin-bottom: 20px;
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                        font-size: 16px;
+                        line-height: 1.6;
+                        color: #24292e;
+                    }
+                    .citations-expander {
+                        border-radius: 12px !important;
+                        border: 1px solid #e1e4e8 !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True
+                )
 
-                if final_output and not final_output.startswith("Error:"):
-                    # Format the output for better readability
-                    formatted_content = final_output.replace('\n', '<br>')
-                    st.markdown(
-                        f"""
-                        <div style="border: 1px solid #e1e4e8; border-radius: 12px; padding: 25px; background-color: #f6f8fa;">
-                            {formatted_content}
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                else:
-                    st.error(final_output)
+                formatted_content = generated_content.replace('\n', '<br>')
+                st.markdown(f'<div class="content-container">{formatted_content}</div>', unsafe_allow_html=True)
 
-            except Exception as e:
-                st.error(f"An unexpected error occurred while running the agent: {e}")
-                st.error("Please ensure your Tavily API key is correct and that you have the necessary hardware (GPU recommended).")
-
-        else:
-            st.warning("Please enter a topic.")
-
+                if citations:
+                    with st.expander("📰 View News Sources Used by the AI", expanded=False):
+                        for i, source in enumerate(citations):
+                            st.markdown(f"[{i+1}. {source['title']}]({source['uri']})")
+    else:
+        st.warning("Please enter a topic to generate content.")

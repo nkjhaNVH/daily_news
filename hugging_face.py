@@ -58,9 +58,14 @@ def generate_content(topic, api_key, model_id, output_format, tone):
             error_details = e.response.json()
             error_message = error_details.get('error', 'No specific message.')
             st.error(f"API Error Details: {error_message}")
-            if e.response.status_code == 403:
+            if e.response.status_code == 401:
+                st.warning("This is an authentication error (401). Please check that your API key is correct. "
+                           "The API key should be a valid token copied from your Hugging Face account settings.")
+            elif e.response.status_code == 403:
                 st.warning("This is a permissions error. Please ensure your API key is valid and has permission to access the selected model. "
                            "Some models may require a pro account or be private. Double-check your API key and the model permissions on Hugging Face.")
+            elif e.response.status_code == 404:
+                st.warning("This is a 'Not Found' error. Please verify that the Hugging Face Model ID is correct and that the model exists.")
         except json.JSONDecodeError:
             st.error(f"Failed to parse error response from the API. Response text: {e.response.text}")
         return None
